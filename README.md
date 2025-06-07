@@ -49,6 +49,10 @@ The system takes three inputs:
    - Add `arjun-krishna1` to your repo.
    - Complete [the submission form](https://forms.gle/sKFBV2sFo2ADMcRt8).
 
+## Implementation Notes
+
+**Layer 0 Foundation**: Dynamic per-diem discovered from public data analysis (see Phase 1 discovery notes). Base rates vary by trip length rather than fixed $100/day.
+
 ## Implementation Requirements
 
 Your `run.sh` script must:
