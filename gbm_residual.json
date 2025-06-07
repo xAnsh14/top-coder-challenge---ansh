@@ -14,8 +14,8 @@
   "learning_rate": 0.1,
   "n_estimators": 90,
   "max_depth": 3,
-  "shrink": 0.85,
-  "cap": 600,
+  "shrink": 0.92,
+  "cap": 550,
   "trees": [
     [
       {

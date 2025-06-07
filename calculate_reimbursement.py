@@ -39,21 +39,25 @@ def _predict_ml_residual(days, miles, receipts):
         # No model available - return 0 residual
         return Decimal('0.00')
     
+    # Cache decimal conversions to avoid duplicate work
+    miles_decimal = float(miles)
+    receipts_decimal = float(receipts)
+    
     # Calculate derived features
-    miles_per_day = float(miles) / days if days > 0 else 0.0
-    receipts_per_day = float(receipts) / days if days > 0 else 0.0
+    miles_per_day = miles_decimal / days if days > 0 else 0.0
+    receipts_per_day = receipts_decimal / days if days > 0 else 0.0
     
     # Feature vector (must match training order)
     # Build feature dictionary first to handle potential feature order differences
     feature_dict = {
         'trip_duration_days': days,
-        'miles_traveled': float(miles),
-        'total_receipts_amount': float(receipts),
+        'miles_traveled': miles_decimal,
+        'total_receipts_amount': receipts_decimal,
         'miles_per_day': miles_per_day,
         'receipts_per_day': receipts_per_day,
-        'log_receipts': np.log1p(float(receipts)),
-        'log_miles': np.log1p(float(miles)),
-        'is_one_day_big': int(days == 1 and float(receipts) > 1000),
+        'log_receipts': np.log1p(receipts_decimal),
+        'log_miles': np.log1p(miles_decimal),
+        'is_one_day_big': int(days == 1 and receipts_decimal > 1000),
         'is_long_hi_eff': int(days >= 7 and miles_per_day > 150)
     }
     
