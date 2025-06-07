@@ -87,3 +87,12 @@ python3 calculate_reimbursement.py 5 800 600
 
 **Total Development Time**: ~6 hours
 **Final Status**: Production-ready, 84% error reduction achieved 
+
+### Model architecture
+1.  Deterministic rule stack (per-diem tiers, mileage tiers, capped receipts, efficiency bonuses).
+2.  Exported GradientBoostingRegressor (Depth 3, 90 trees) trained on residuals, embedded as JSON.
+   * Features: days, miles, receipts, ratios, logs, interaction flags.
+3.  Residual correction shrunk by 0.85 and clipped at ±$600.
+4.  All math uses `decimal.Decimal` + ROUND_HALF_UP; each component rounded to cents before summing.
+
+Runtime is pure-stdlib; no external imports. 

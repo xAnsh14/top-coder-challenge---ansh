@@ -7,9 +7,17 @@ import sys
 import json
 import os
 from decimal import Decimal, ROUND_HALF_UP
+import numpy as np
 
 # Global variable to cache loaded model
 _GBM_MODEL = None
+
+# Helper function for consistent rounding
+TWO_CENTS = Decimal('0.01')
+
+def _r(x):
+    """Helper for rounding to cents"""
+    return x.quantize(TWO_CENTS, rounding=ROUND_HALF_UP)
 
 def _load_gbm_model():
     """Load GBM model from JSON file (cached)"""
@@ -25,7 +33,7 @@ def _load_gbm_model():
     return _GBM_MODEL
 
 def _predict_ml_residual(days, miles, receipts):
-    """Predict ML residual using exported GBM model"""
+    """Predict ML residual using exported GBM model (supports ensemble)"""
     model = _load_gbm_model()
     if model is None:
         # No model available - return 0 residual
@@ -36,14 +44,58 @@ def _predict_ml_residual(days, miles, receipts):
     receipts_per_day = float(receipts) / days if days > 0 else 0.0
     
     # Feature vector (must match training order)
-    features = [
-        days,                    # trip_duration_days
-        float(miles),           # miles_traveled  
-        float(receipts),        # total_receipts_amount
-        miles_per_day,          # miles_per_day
-        receipts_per_day        # receipts_per_day
-    ]
+    # Build feature dictionary first to handle potential feature order differences
+    feature_dict = {
+        'trip_duration_days': days,
+        'miles_traveled': float(miles),
+        'total_receipts_amount': float(receipts),
+        'miles_per_day': miles_per_day,
+        'receipts_per_day': receipts_per_day,
+        'log_receipts': np.log1p(float(receipts)),
+        'log_miles': np.log1p(float(miles)),
+        'is_one_day_big': int(days == 1 and float(receipts) > 1000),
+        'is_long_hi_eff': int(days >= 7 and miles_per_day > 150)
+    }
     
+    # Get ordered features list from model
+    model_features = model.get('features', [
+        'trip_duration_days',
+        'miles_traveled',
+        'total_receipts_amount',
+        'miles_per_day',
+        'receipts_per_day'
+    ])
+    
+    # Create ordered feature vector
+    features = [feature_dict.get(fname, 0.0) for fname in model_features]
+    
+    # Check if we're using an ensemble model
+    if model.get('is_ensemble', False):
+        # Get predictions from both models and average them
+        prediction1 = _predict_single_model(model['model1'], features)
+        prediction2 = _predict_single_model(model['model2'], features)
+        total_prediction = (prediction1 + prediction2) / 2
+    else:
+        # Use standard single-model prediction
+        total_prediction = _predict_single_model(model, features)
+    
+    # Convert to Decimal for consistency
+    ml_residual = Decimal(str(total_prediction))
+    
+    # Apply shrink and cap from model parameters or use defaults
+    SHRINK = Decimal(str(model.get('shrink', 0.90)))
+    CAP = Decimal(str(model.get('cap', 600)))
+    
+    # Apply shrinking factor
+    ml_residual *= SHRINK
+    
+    # Apply capping to limit maximum effect
+    ml_residual = max(min(ml_residual, CAP), -CAP)
+    
+    return ml_residual
+
+def _predict_single_model(model, features):
+    """Helper function to predict with a single GBM model"""
     # Start with initial prediction
     total_prediction = model['init_prediction']
     
@@ -67,8 +119,7 @@ def _predict_ml_residual(days, miles, receipts):
                 else:
                     node_idx = node['right']
     
-    # Convert to Decimal for consistency
-    return Decimal(str(total_prediction))
+    return total_prediction
 
 # Layer 0: Dynamic Per-Diem Rates (MICRO-TUNED for 8-10 day bucket)
 BASE_PER_DIEM_RATES = {
@@ -288,32 +339,29 @@ def calculate_reimbursement(trip_duration_days, miles_traveled, total_receipts_a
     receipts = total_receipts_amount if isinstance(total_receipts_amount, Decimal) else Decimal(str(total_receipts_amount))
     
     # Layer 0: Base per-diem calculation
-    per_diem_component = calculate_layer_0_per_diem(days)
+    per_diem_component = _r(calculate_layer_0_per_diem(days))
     
     # Layer 1: Mileage reimbursement (now takes days for scaling)
-    mileage_component = calculate_layer_1_mileage(days, miles)
+    mileage_component = _r(calculate_layer_1_mileage(days, miles))
     
     # Layer 2: Receipt processing with scaled tail rates
-    receipt_component = calculate_layer_2_receipts(days, receipts)
+    receipt_component = _r(calculate_layer_2_receipts(days, receipts))
     
     # Layer 3: Efficiency bonus system
-    efficiency_component = calculate_layer_3_efficiency_bonus(days, miles)
+    efficiency_component = _r(calculate_layer_3_efficiency_bonus(days, miles))
     
     # Layer 4: Special case handling
-    special_component = calculate_layer_4_special_cases(days, miles, receipts)
+    special_component = _r(calculate_layer_4_special_cases(days, miles, receipts))
     
     # PHASE 3: ML Residual Correction
-    ml_residual = _predict_ml_residual(days, miles, receipts)
+    ml_residual = _r(_predict_ml_residual(days, miles, receipts))
     
     # Total reimbursement
     total_reimbursement = (per_diem_component + mileage_component + 
                           receipt_component + efficiency_component + 
                           special_component + ml_residual)
     
-    # Round to 2 decimal places using ROUND_HALF_UP (legacy system behavior)
-    result = total_reimbursement.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-    
-    return result
+    return total_reimbursement
 
 def debug_calculation(trip_duration_days, miles_traveled, total_receipts_amount):
     """Debug version that shows component breakdown"""
